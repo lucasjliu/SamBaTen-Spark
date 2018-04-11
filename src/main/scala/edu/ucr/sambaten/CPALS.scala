@@ -116,7 +116,7 @@ class CPALS(
     var factMats: Array[ColMatrix] = null
     var lambda: BDV[Double] = null
     var restart = true
-    while (restart) { // in case of overflow, should not happen in most cases
+    while (restart) { //in case of overflow, should not happen in most cases
       restart = false
       // initialize factors
       factMats = shape.map(len => 
@@ -145,9 +145,9 @@ class CPALS(
   private def updateIteration(tensor: CoordinateTensor,
       factMats: Array[ColMatrix], a: Int, b: Int, c: Int): BDV[Double] = {
     val A = mttkrp(tensor, factMats, a) multiply
-      (factMats(b).gramian hadamard factMats(c).gramian).pseudoInv.persist
+      (factMats(b).gramian hadamard factMats(c).gramian).pseudoInv
     val (normA, lambda) = ColMatrix(A).normByCol
-    factMats(a) = normA.persist
+    factMats(a) = normA.persist //the reason why factMats is Array[..]
     new BDV(lambda)
   }
 

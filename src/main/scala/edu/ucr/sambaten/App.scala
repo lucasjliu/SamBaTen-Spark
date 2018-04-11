@@ -8,7 +8,7 @@ object App {
   def runTest[R](name: String, block: => R) = {
     logger.error(s"Test $name")
     val t0 = System.nanoTime()
-    val result = block    // call-by-name
+    val result = block
     val t1 = System.nanoTime
     val etime = (t1-t0)/1e9
     logger.error(s"result: $result, time cost: $etime")
@@ -20,7 +20,7 @@ object App {
     new TestCoordinate
     new TestVector
     new TestMatrix
-    new TestCPALS
+    //new TestCPALS
     new TestSambaten
     logger.error("All tests passed")
   }

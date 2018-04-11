@@ -51,15 +51,15 @@ object SambaTensor {
   def apply(entries: RDD[TEntry], shape: Coordinate)(implicit _sc: SparkContext): SambaTensor =
     apply(new CoordinateTensor(entries, shape))
 
-  def initWeight(tensor: CoordinateTensor): Seq[BDV[Double]] = { //// sort at local?
+  // density importance weighted by square sum of a slice, e.g. (::, ::, c)
+  def initWeight(tensor: CoordinateTensor): Seq[BDV[Double]] = {
     (0 until tensor.dims).map { dim =>
-      BDV(tensor.mapEntries { case TEntry(coord, value) => (coord(dim), value)}
-      .groupByKey.sortByKey()
-      .map(_._2).map(_.reduce(_+_))
-      .collect)
+      BDV(tensor.mapEntries { case TEntry(coord, value) => (coord(dim), value * value)}
+      .reduceByKey(_+_).collect.sortBy(_._1).map(_._2))
     }.toIndexedSeq
   }
 
+  // A-Res weighted sampling algorithm
   def aResSampling(weights: BDV[Double], sampleSize: Int)(
       implicit rand: Random=new Random): Seq[Int] = {
     val minHeap = PriorityQueue[(Double,Int)]()(Ordering.by(-_._1))
@@ -108,20 +108,10 @@ class SambatenModel(
   def getSample(lens: Seq[Int])(implicit d: DummyImplicit): SambatenModel = 
     getSample(lens.map(len => (0 until len)))
 
-  def updateWith(newFactMats: Seq[BDM[Double]], idxMaps: Seq[Seq[Int]],
-      incDim: Int, incSize: Int, repetitions: Int): Unit = {
-    newFactMats.zipWithIndex.map { case (newFactMat, dim) =>
-      if (dim == incDim) {
-        assert(newFactMats(dim).rows == idxMaps(dim).length + incSize)
-        val beg = factMats(dim).length - incSize
-        val incBeg = newFactMat.rows - incSize
-        val rank = newFactMat.cols
-        // average out and add to new slice
-        for (r <- 0 until incSize; c <- 0 until rank)
-          factMats(dim)(beg+r)(c) += newFactMat(incBeg+r, c) / repetitions
-      } else assert(newFactMats(dim).rows == idxMaps(dim).length)
-      updateDimWith(dim, newFactMat, idxMaps(dim))
-    }
+  // only update zero entries
+  def updateWith(newFactMats: Seq[BDM[Double]], idxMaps: Seq[Seq[Int]]): Unit = {
+    assert(newFactMats.length == dims && idxMaps.length == dims)
+    (0 until dims).foreach(dim => updateDimWith(dim, newFactMats(dim), idxMaps(dim)) )
   }
 
   private def updateDimWith(dim: Int, newFactMat: BDM[Double], idxMap: Seq[Int]): Unit = {
@@ -160,36 +150,52 @@ class Sambaten(
     val dims = tensor.dims
     val sampleShape = (0 until dims).map(tensor.shape(_) / samplingFactor)
     val newTensorShape = sampleShape.updated(incDim, sampleShape(incDim) + batchSize)
-    model.append(incDim, BDM.zeros[Double](batchSize, rank))
+    val factMatNewSlice = BDM.zeros[Double](batchSize, rank)
     for (rep <- 0 until repetitions) {
+      // get sample tensor and row index mapping
       val (sampleTensor, sampleIdxs) = tensor.denseWeightedSampling(sampleShape)
+
+      // appended with incoming slice to create a sample
       val newTensor = sampleTensor.modeAppend(SambaTensor.getSample(
         newSlice, sampleIdxs.updated(incDim, (0 until batchSize))), incDim)
-      val newModel = new SambatenModel(als.run(newTensor.persist))
+
+      val newModel = als.run(newTensor.persist)
+
+      // get factors reference using the same sampling indexes
       val refs = model.getSample(sampleIdxs).factMats.map(toBDM(_))
-      val newFactMats = rearrangeRank(newModel.factMats.map(toBDM(_)).toSeq, refs(0))
+
+      // the result of CP can have permutation and scaling ambiguity, so re-arrange
+      // and re-scale them based on the reference of existing factors
+      val newFactMats = rearrangeRank(newModel.factMats.map(toBDM(_)).toIndexedSeq, refs(0))
       (0 until dims).foreach(dim => renorm(newFactMats(dim), refs(dim)) )
-      model.updateWith(newFactMats, sampleIdxs, incDim, batchSize, repetitions)
+
+      // for entries of new factors, average them and append after the for loop
+      factMatNewSlice += newFactMats(incDim)(-batchSize to -1, ::) / repetitions.toDouble
+
+      // for entries of existing factors, update directly because it`s hard to average them
+      model.updateWith(newFactMats, sampleIdxs)
     }
+    model.append(incDim, factMatNewSlice)
     tensor = tensor.append(newSlice, incDim).persist
     model.asInstanceOf[CPDecompModel]
   }
 
+  // Re-arrange columns of the factor matrices of current sample in order to 
+  // be consistent with the existing factor matrices.
+  // The refernce factor matrix is sampled from the existing factors
   private def rearrangeRank(factMats: Seq[BDM[Double]], refA: BDM[Double]): Seq[BDM[Double]] = {
     assert(!factMats.isEmpty)
     val A = CoordinateMatrix(factMats(0))
     val ref = ColMatrix(refA).normByCol._1
     require(A.shape == ref.shape, "A.shape:" + A.shape.toString + " ref.shape:" + ref.shape.toString)
-    //logger.error("Before re-arrange: ")
-    //println(factMats(0))
-    //logger.error("ref: ")
-    //println(ref.toBDM)
     val rank = A.nCol
-    val similarity = (A.transpose multiply ref).toBDM
+    // After normalizing, the dot product of correct matching should be close to 1.0
+    // according to Cauchy-Schwartz inequality. So take dot product as similarity.
+    val similarity = (A.transpose multiply ref).toBDM //TODO: local multiply
     for (r <- 0 until similarity.rows; c <- 0 until similarity.cols)
       similarity(r, c) = math.abs(similarity(r, c))
     val cost = similarity * -1.0 :+ 1.0
-    val rankMap = KM.extractMatching(
+    val rankMap = KM.extractMatching( //KM bipartite matching
       (0 until rank).map(r => cost(r, ::).t.toArray.toSeq).toSeq)._1
     assert(rankMap.distinct.length == rank)
     val rearrangedFactMats = factMats.map { mat =>
@@ -199,24 +205,23 @@ class Sambaten(
         newMat(i, rankMap(r)) = mat(i, r)
       newMat
     }
-    //logger.error("After re-arrange: ")
-    //println(rearrangedFactMats(0))
     rearrangedFactMats
   }
 
-  private def renorm(C: BDM[Double], ref: BDM[Double]): Unit = {
+  // re-scale factor matrix so that every column has the same norm as that column in ref
+  private def renorm(mat: BDM[Double], ref: BDM[Double]): Unit = {
+    // mat.rows can be greater than ref.rows when it is the increasing dimension.
     val sampleSize = ref.rows
-    assert(rank == C.cols)
-    // C.rows >= ref.rows
+    assert(rank == mat.cols)
     val lambdaRef = (0 until rank).map { c =>
       math.sqrt((0 until sampleSize).map(r => ref(r,c)*ref(r,c)).reduce(_+_)) }
-    val lambdaC = (0 until rank).map { c =>
-      math.sqrt((0 until sampleSize).map(r => C(r,c)*C(r,c)).reduce(_+_)) }
+    val lambdaMat = (0 until rank).map { c =>
+      math.sqrt((0 until sampleSize).map(r => mat(r,c)*mat(r,c)).reduce(_+_)) }
     val sign = (v: Double) => { if (v >= 0) 1.0 else -1.0 }
-    val signC = (0 until rank).map { c =>
-      sign((0 until sampleSize).map(r => sign(ref(r, c)) / sign(C(r, c))).reduce(_+_)) }
-    for (r <- 0 until C.rows; c <- 0 until rank)
-      C(r, c) *= (lambdaRef(c) / lambdaC(c) * signC(c))
+    val signMat = (0 until rank).map { c =>
+      sign((0 until sampleSize).map(r => sign(ref(r, c)) / sign(mat(r, c))).reduce(_+_)) }
+    for (r <- 0 until mat.rows; c <- 0 until rank)
+      mat(r, c) *= (lambdaRef(c) / lambdaMat(c) * signMat(c))
   }
 }
 
@@ -243,19 +248,18 @@ class TestSambaten(implicit val sc: SparkContext) {
     assert( isZero(fullModel.getSample(idxSeqs).test(sampleTensor)) )
   }
 
-  def stressTest = {
+  def stressTest(I: Int = 100, J: Int = 100, K: Int = 100, batchSize: Int = 20,
+      rank: Int = 5, tol: Double = 1e-4, rep: Int = 1) = {
     val seed = 0 ////not working yet
     implicit val basis = RandBasis.withSeed(seed)
     implicit val rand = new Random(seed)
-    val rank = 5; val tol=1e-4; val rep = 1
-    val batchSize = 20
-    val I = 100; val J = 100; val K = 100
 
     val fullModel = new SambatenModel(TestCPALS.rand(Coordinate(I,J,K), rank))
     val dataset = new SyntheticIncDataset(fullModel, 2)
     var slice = dataset.genNewData(batchSize)
     val als = new CPALS(rank=rank, tol=tol)
   
+    logger.error("start sambaten")
     val sambaten = new Sambaten(SambaTensor(slice.get),
       new SambatenModel(als.run(slice.get)),
       incDim=2, repetitions=rep, samplingFactor=2, rank=rank, tol=tol)
@@ -274,5 +278,6 @@ class TestSambaten(implicit val sc: SparkContext) {
   }
 
   testSample
-  //for (i <- 0 until 10) stressTest
+  for (i <- 0 until 5) stressTest(6, 6, 12, 3, rank=3, tol=0.001, rep=3)
+  for (i <- 0 until 5) stressTest(100, 100, 100, 20)
 }

@@ -75,11 +75,22 @@ object CoordinateMatrix {
   }
 }
 
+/**
+ * Matrix with both entries and columns property.
+ * The APIs perform on either entries or column RDD, so it can be treated as one
+ * RDD stage in DAG. Otherwise should be persisted if both entries and cols will
+ * be used separately.
+ *
+ * @param cols 	    RDDs of columns.
+ * @param entries 	RDD of Tensor entries.
+ * @param shape     Shape of the matrix.
+ */
 class ColMatrix (
     val cols: Array[CoordinateVector],
     _entries: RDD[TEntry],
     _shape: Coordinate)(
     implicit _sc: SparkContext) extends CoordinateMatrix(_entries, _shape) {
+  //cols RDDs
   def normByCol: (ColMatrix, Array[Double]) = {
     val pairs = cols.map(_.normalize)
     val newCols = pairs.map(_._1).toArray
@@ -88,8 +99,10 @@ class ColMatrix (
     (ColMatrix(newCols), lambda)
   }
 
+  //entries RDD
   override def transpose: ColMatrix = ColMatrix(CoordinateMatrix(toBDM.t))
 
+  //entries RDD
   override def gramian = CoordinateMatrix(this).gramian
 
   override def persist: ColMatrix =
@@ -97,6 +110,8 @@ class ColMatrix (
 }
 
 object ColMatrix {
+  // The input rdds or created ColMatrix should be persisted if both entries 
+  // and cols will be used separately
   def apply(cols: Array[CoordinateVector])(implicit sc: SparkContext): ColMatrix = {
     val nCol = cols.length
     val nRow = if (cols.isEmpty) 0 else cols(0).shape(0)
