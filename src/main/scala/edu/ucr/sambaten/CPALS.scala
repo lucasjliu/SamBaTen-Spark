@@ -91,7 +91,7 @@ object LinalgUtil {
  *
  * @param rank 			Rank for the tensor.
  * @param maxIter 	Maximum number of iterations.
- * @param tol 			Tolerance of error rate.
+ * @param tol 			Tolerance of error rate for convergence.
  */
 class CPALS(
     private var rank: Int = 10,

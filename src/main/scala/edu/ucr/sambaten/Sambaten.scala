@@ -278,6 +278,7 @@ class TestSambaten(implicit val sc: SparkContext) {
   }
 
   testSample
-  for (i <- 0 until 5) stressTest(6, 6, 12, 3, rank=3, tol=0.001, rep=3)
+  for (i <- 0 until 5) stressTest(20, 20, 30, 10, rank=3, rep=1)
+  for (i <- 0 until 5) stressTest(20, 20, 30, 10, rank=3, rep=2)
   for (i <- 0 until 5) stressTest(100, 100, 100, 20)
 }
