@@ -249,7 +249,7 @@ class TestSambaten(implicit val sc: SparkContext) {
   }
 
   def stressTest(I: Int = 100, J: Int = 100, K: Int = 100, batchSize: Int = 20,
-      rank: Int = 5, tol: Double = 1e-4, rep: Int = 1) = {
+      rank: Int = 5, tol: Double = 1e-4, rep: Int = 1, s: Int = 2) = {
     val seed = 0 ////not working yet
     implicit val basis = RandBasis.withSeed(seed)
     implicit val rand = new Random(seed)
@@ -262,7 +262,7 @@ class TestSambaten(implicit val sc: SparkContext) {
     logger.error("start sambaten")
     val sambaten = new Sambaten(SambaTensor(slice.get),
       new SambatenModel(als.run(slice.get)),
-      incDim=2, repetitions=rep, samplingFactor=2, rank=rank, tol=tol)
+      incDim=2, repetitions=rep, samplingFactor=s, rank=rank, tol=tol)
   
     slice = dataset.genNewData(batchSize)
     while (!slice.isEmpty) {
@@ -278,7 +278,5 @@ class TestSambaten(implicit val sc: SparkContext) {
   }
 
   testSample
-  for (i <- 0 until 5) stressTest(20, 20, 30, 10, rank=3, rep=1)
-  for (i <- 0 until 5) stressTest(20, 20, 30, 10, rank=3, rep=2)
-  for (i <- 0 until 5) stressTest(100, 100, 100, 20)
+  for (i <- 0 until 5) stressTest(100, 100, 100, 50, rep=2)
 }
