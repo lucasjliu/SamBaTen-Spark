@@ -9,6 +9,8 @@ sum of rank-one tensors. It produces low-dimensional latent factors as a compact
 
 In many real-world applications, data grow dynamically. For example, in a time-evolving social network, user interactions generated every few seconds can be translated to new tensor slices. SamBaTen is an algorithm that can efficiently and incrementally update the CP decomposition with the incoming tensor slices, without having to re-compute the full decomposition every time. It instead operates on summaries of the data, and projects the results back to existing factors with the help of uniqueness of CP decomposition. Please see the [paper](https://arxiv.org/abs/1709.00668) for details.
 
+CP-ALS used in the main algorithm is implemented in a way similar to [HATEN2-PARAFAC-Naive](https://ieeexplore.ieee.org/abstract/document/7113355/), but with only O(#non-zero) maximum intermediate data.
+
 ## Installation
 Requirements: Scala 2.11.11, Spark 2.2.0, sbt 0.1.
 
