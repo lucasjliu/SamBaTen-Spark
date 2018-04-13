@@ -4,6 +4,10 @@ This is a re-implementation of [SamBaTen](https://arxiv.org/abs/1709.00668) in S
 
 ## Introduction
 
+A tensor is a multidimensional or N-way array. CP (PARAFAC) decomposes a tensor as a
+sum of rank-one tensors. It produces low-dimensional latent factors as a compact and interpretable description of this multi-order tensor. CP decomposition is conceptually simple. Each order of the tensor is modeled as a linear combination of rank-one tensors (vectors). And the optimal model is unique, under mild conditions.
+
+In many real-world applications, data grow dynamically. For example, in a time-evolving social network, user interactions generated every few seconds can be translated to new tensor slices. SamBaTen is an algorithm that can efficiently and incrementally update the CP decomposition with the incoming tensor slices, without having to re-compute the full decomposition every time. It instead operates on summaries of the data, and projects the results back to existing factors with the help of uniqueness of CP decomposition. Please see the [paper](https://arxiv.org/abs/1709.00668) for details.
 
 ## Installation
 Requirements: Scala 2.11.11, Spark 2.2.0, sbt 0.1.
@@ -47,7 +51,7 @@ spark-submit --class "edu.ucr.sambaten.App" --master your_spark_url ./target/sca
 ## References
 
 - [SamBaTen: Sampling-based Batch Incremental Tensor Decomposition](https://arxiv.org/abs/1709.00668).
-  Gujral, Ekta, Ravdeep Pasricha, and Evangelos E. Papalexakis. arXiv, 2017.
+  Gujral, Ekta, Ravdeep Pasricha, and Evangelos E. Papalexakis. SIAM SDM, 2018.
 - [Haten2: Billion-scale tensor decompositions](https://ieeexplore.ieee.org/abstract/document/7113355/).
   Jeon, Inah, Evangelos E. Papalexakis, U. Kang, and Christos Faloutsos. Data Engineering (ICDE), 2015 IEEE 31st International Conference on. IEEE, 2015.
 - [Tensors for Data Mining and Data Fusion: Models, Applications, and Scalable Algorithms](https://dl.acm.org/citation.cfm?id=2915921).
